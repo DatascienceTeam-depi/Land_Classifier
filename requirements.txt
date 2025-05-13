@@ -5,4 +5,7 @@ torch
 torch.nn.functional
 transforms
 models
-numpy
+os
+zipfile
+shutil
+gdown
