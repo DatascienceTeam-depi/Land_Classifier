@@ -1,10 +1,8 @@
-torch
-torchvision
-numpy
-matplotlib
-seaborn
-scikit-learn
-tqdm
-gdown
 streamlit
-PIL
+Image
+torch.nn
+torch
+torch.nn.functional
+transforms
+models
+numpy
