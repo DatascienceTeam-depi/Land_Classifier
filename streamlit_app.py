@@ -1,105 +1,98 @@
 import os
 import zipfile
+import shutil
 import streamlit as st
+import gdown
 from PIL import Image
+from torchvision import transforms, models
 import torch
 import torch.nn as nn
-from torchvision import transforms, models
-import gdown
 
-# ------------------ 1. Download dataset ------------------
-@st.cache_resource
+# Set page config
+st.set_page_config(page_title="Land Type Classifier", layout="wide")
+
+# Define constants
+DATA_DIR = "data/EuroSAT"
+MODEL_PATH = "model/resnet18_eurosat.pt"
+
+# Google Drive file IDs
+DATA_DRIVE_FILE_ID = "1NiurPYhckTUhVzzIo4hje7DtaAkzCd2B"   # استبدل هذا بـ ID تبع الداتا إذا تغيّر
+MODEL_DRIVE_FILE_ID = "1NiurPYhckTUhVzzIo4hje7DtaAkzCd2B"  # استبدل هذا بـ ID تبع النموذج
+
+DATA_DRIVE_URL = f"https://drive.google.com/uc?id={DATA_DRIVE_FILE_ID}"
+MODEL_DRIVE_URL = f"https://drive.google.com/uc?id={MODEL_DRIVE_FILE_ID}"
+
+# Download dataset
+@st.cache_data(show_spinner=True)
 def download_dataset():
-    file_id = "1NiurPYhckTUhVzzIo4hje7DtaAkzCd2B"
-    url = f"https://drive.google.com/uc?id={file_id}"
-    output = "dataset.zip"
-    extract_to = "data"
-    if not os.path.exists(extract_to):
-        st.info("Downloading dataset...")
-        gdown.download(url, output, quiet=False)
-        st.info("Extracting...")
-        with zipfile.ZipFile(output, "r") as zip_ref:
-            zip_ref.extractall(extract_to)
-        os.remove(output)
-        st.success("Dataset ready.")
-    else:
-        st.info("Dataset already exists.")
+    os.makedirs("data", exist_ok=True)
+    zip_path = "data/eurosat.zip"
 
-# ------------------ 2. Download model ------------------
-@st.cache_resource
+    if not os.path.exists(DATA_DIR):
+        st.info("📥 Downloading dataset from Google Drive. Please wait...")
+        gdown.download(DATA_DRIVE_URL, zip_path, quiet=False, use_cookies=True)
+
+        st.info("🗂️ Extracting dataset...")
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall("data")
+
+        os.remove(zip_path)
+
+    return DATA_DIR
+
+# Download model
+@st.cache_data(show_spinner=True)
 def download_model():
-    model_path = "model.pth"
-    if not os.path.exists(model_path):
-        file_id = "1VtxQwcYy_-fPccAVfIQI6VQDEdXhwkol"
-        url = f"https://drive.google.com/uc?id={file_id}"
-        gdown.download(url, model_path, quiet=False)
-    return model_path
+    os.makedirs("model", exist_ok=True)
+    if not os.path.exists(MODEL_PATH):
+        st.info("📥 Downloading model from Google Drive. Please wait...")
+        gdown.download(MODEL_DRIVE_URL, MODEL_PATH, quiet=False, use_cookies=True)
+    return MODEL_PATH
 
-# ------------------ 3. Inspect folder structure ------------------
-@st.cache_data
-def inspect_folder_structure(path="data"):
-    tree = []
-    for root, dirs, files in os.walk(path):
-        level = root.replace(path, "").count(os.sep)
-        indent = "  " * level
-        tree.append(f"{indent}{os.path.basename(root)}/")
-        for f in files:
-            tree.append(f"{indent}  {f}")
-    return tree
-
-# ------------------ 4. Load model correctly ------------------
-@st.cache_resource
-def load_model(model_path, num_classes):
+# Load model
+@st.cache_resource(show_spinner=True)
+def load_model():
+    download_model()
     model = models.resnet18(pretrained=False)
-    model.fc = nn.Linear(model.fc.in_features, num_classes)
-    state_dict = torch.load(model_path, map_location=torch.device('cpu'))
-    model.load_state_dict(state_dict)
+    model.fc = nn.Linear(model.fc.in_features, 10)
+    model.load_state_dict(torch.load(MODEL_PATH, map_location=torch.device('cpu')))
     model.eval()
     return model
 
-# ------------------ 5. Main App ------------------
-def main():
-    st.title("🌍 Land Type Classifier")
-    
-    download_dataset()
-    model_path = download_model()
-    
-    # Show dataset structure
-    st.subheader("📁 Dataset Structure")
-    for line in inspect_folder_structure():
-        st.text(line)
+# Image transforms
+transform = transforms.Compose([
+    transforms.Resize((64, 64)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.3444, 0.3809, 0.4082], std=[0.1809, 0.1350, 0.1239])
+])
 
-    # Prepare class names
-    classes = sorted([d.name for d in os.scandir('data') if d.is_dir()])
+# Class labels
+class_names = ['AnnualCrop', 'Forest', 'HerbaceousVegetation', 'Highway', 'Industrial',
+               'Pasture', 'PermanentCrop', 'Residential', 'River', 'SeaLake']
 
-    # Load model
-    model = load_model(model_path, num_classes=len(classes))
+# Load dataset and model
+data_dir = download_dataset()
+model = load_model()
 
-    # Sidebar input
-    st.sidebar.header("Upload an image")
-    uploaded_file = st.sidebar.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
-    
-    if uploaded_file is not None:
-        image = Image.open(uploaded_file).convert("RGB")
-        st.image(image, caption="Uploaded Image", use_column_width=True)
+# UI
+st.title("🌍 Land Type Classification using Satellite Images")
 
-        # Transform and predict
-        transform = transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                 std=[0.229, 0.224, 0.225])
-        ])
+st.sidebar.header("Upload an Image")
+uploaded_file = st.sidebar.file_uploader("Choose a satellite image", type=["jpg", "jpeg", "png"])
 
-        input_tensor = transform(image).unsqueeze(0)
+if uploaded_file is not None:
+    image = Image.open(uploaded_file).convert("RGB")
+    st.image(image, caption="🖼️ Uploaded Image", use_column_width=True)
 
-        with torch.no_grad():
-            outputs = model(input_tensor)
-            _, preds = torch.max(outputs, 1)
-            predicted_class = classes[preds.item()]
+    input_tensor = transform(image).unsqueeze(0)
 
-        st.subheader("Prediction")
-        st.success(f"**{predicted_class}**")
+    with torch.no_grad():
+        output = model(input_tensor)
+        _, predicted = torch.max(output, 1)
+        predicted_class = class_names[predicted.item()]
 
-if __name__ == "__main__":
-    main()
+    st.subheader("🔍 Predicted Land Type:")
+    st.success(predicted_class)
+else:
+    st.info("Please upload a satellite image to classify.")
+
